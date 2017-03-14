@@ -3,6 +3,7 @@ package pgtype
 import (
 	"errors"
 	"io"
+	"reflect"
 )
 
 // PostgreSQL oids for common types
@@ -114,3 +115,92 @@ type TextEncoder interface {
 }
 
 var errUndefined = errors.New("cannot encode status undefined")
+
+type DataType struct {
+	Name string
+	Type reflect.Type
+	Oid  Oid
+}
+
+type ConnInfo struct {
+	oidToDataType         map[Oid]*DataType
+	nameToDataType        map[string]*DataType
+	reflectTypeToDataType map[reflect.Type]*DataType
+}
+
+func NewConnInfo() *ConnInfo {
+	return &ConnInfo{
+		oidToDataType:         make(map[Oid]*DataType, 256),
+		nameToDataType:        make(map[string]*DataType, 256),
+		reflectTypeToDataType: make(map[reflect.Type]*DataType, 256),
+	}
+}
+
+func NewDefaultConnInfo() *ConnInfo {
+	ci := NewConnInfo()
+
+	// TODO - probably better if exact 1 to 1 mapping between oids and types. So might need to separate text and varchar and inet and cidr
+	dataTypes := []DataType{
+		{Name: "_aclitem", Type: reflect.TypeOf(AclitemArray{}), Oid: AclitemArrayOid},
+		{Name: "_bool", Type: reflect.TypeOf(BoolArray{}), Oid: BoolArrayOid},
+		{Name: "_bytea", Type: reflect.TypeOf(ByteaArray{}), Oid: ByteaArrayOid},
+		{Name: "_cidr", Type: reflect.TypeOf(CidrArray{}), Oid: CidrArrayOid},
+		{Name: "aclitem", Type: reflect.TypeOf(Aclitem{}), Oid: AclitemOid},
+		{Name: "bool", Type: reflect.TypeOf(Bool{}), Oid: BoolOid},
+		{Name: "bytea", Type: reflect.TypeOf(Bytea{}), Oid: ByteaOid},
+		{Name: "char", Type: reflect.TypeOf(QChar{}), Oid: CharOid},
+		{Name: "cid", Type: reflect.TypeOf(Cid{}), Oid: CidOid},
+		{Name: "cidr", Type: reflect.TypeOf(CidrArray{}), Oid: CidrOid},
+		{Name: "_date", Type: reflect.TypeOf(DateArray{}), Oid: DateArrayOid},
+		{Name: "date", Type: reflect.TypeOf(Date{}), Oid: DateOid},
+		{Name: "_float4", Type: reflect.TypeOf(Float4Array{}), Oid: Float4ArrayOid},
+		{Name: "float4", Type: reflect.TypeOf(Float4{}), Oid: Float4Oid},
+		{Name: "_float8", Type: reflect.TypeOf(Float8Array{}), Oid: Float8ArrayOid},
+		{Name: "float8", Type: reflect.TypeOf(Float8{}), Oid: Float8Oid},
+		{Name: "_inet", Type: reflect.TypeOf(InetArray{}), Oid: InetArrayOid},
+		{Name: "inet", Type: reflect.TypeOf(Inet{}), Oid: InetOid},
+		{Name: "_int2", Type: reflect.TypeOf(Int2Array{}), Oid: Int2ArrayOid},
+		{Name: "int2", Type: reflect.TypeOf(Int2{}), Oid: Int2Oid},
+		{Name: "_int4", Type: reflect.TypeOf(Int4Array{}), Oid: Int4ArrayOid},
+		{Name: "int4", Type: reflect.TypeOf(Int4{}), Oid: Int4Oid},
+		{Name: "_int8", Type: reflect.TypeOf(Int8Array{}), Oid: Int8ArrayOid},
+		{Name: "int8", Type: reflect.TypeOf(Int8{}), Oid: Int8Oid},
+		{Name: "jsonb", Type: reflect.TypeOf(Jsonb{}), Oid: JsonbOid},
+		{Name: "json", Type: reflect.TypeOf(Json{}), Oid: JsonOid},
+		{Name: "name", Type: reflect.TypeOf(Name{}), Oid: NameOid},
+		{Name: "oid", Type: reflect.TypeOf(OidValue{}), Oid: OidOid},
+		{Name: "_text", Type: reflect.TypeOf(TextArray{}), Oid: TextArrayOid},
+		{Name: "text", Type: reflect.TypeOf(Text{}), Oid: TextOid},
+		{Name: "tid", Type: reflect.TypeOf(Tid{}), Oid: TidOid},
+		{Name: "_timestamp", Type: reflect.TypeOf(TimestampArray{}), Oid: TimestampArrayOid},
+		{Name: "timestamp", Type: reflect.TypeOf(Timestamp{}), Oid: TimestampOid},
+		{Name: "_timestamptz", Type: reflect.TypeOf(TimestamptzArray{}), Oid: TimestamptzArrayOid},
+		{Name: "timestamptz", Type: reflect.TypeOf(Timestamptz{}), Oid: TimestamptzOid},
+		{Name: "_varchar", Type: reflect.TypeOf(VarcharArray{}), Oid: VarcharArrayOid},
+		{Name: "varchar", Type: reflect.TypeOf(Text{}), Oid: VarcharOid},
+		{Name: "xid", Type: reflect.TypeOf(Xid{}), Oid: XidOid},
+	}
+
+	for _, dt := range dataTypes {
+		ci.RegisterDataType(dt)
+	}
+
+}
+
+func (ci *ConnInfo) RegisterDataType(t DataType) {
+	ci.oidToDataType[t.Oid] = &t
+	ci.nameToDataType[t.Name] = &t
+	ci.reflectTypeToDataType[t.Type] = &t
+}
+
+func (ci *ConnInfo) DataTypeForOid(oid Oid) *DataType {
+	return ci.oidToDataType[oid]
+}
+
+func (ci *ConnInfo) DataTypeForName(name string) *DataType {
+	return ci.nameToDataType[name]
+}
+
+func (ci *ConnInfo) DataTypeForReflectType(t reflect.Type) *DataType {
+	return ci.reflectTypeToDataType[t]
+}

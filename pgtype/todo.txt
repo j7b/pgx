@@ -1,0 +1,6 @@
+still todo:
+
+use ConnInfo throughout pgx -- replacing current oid and type name mapping
+make types 1 to 1 with oids
+add Decode/Encode interfaces that take ConnInfo or make the existing ones take it
+implement HstoreArray as proof of concept for arrays of types without known oids

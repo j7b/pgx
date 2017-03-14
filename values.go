@@ -287,8 +287,6 @@ func Decode(vr *ValueReader, d interface{}) error {
 	switch v := d.(type) {
 	case *string:
 		*v = decodeText(vr)
-	case *[]interface{}:
-		*v = decodeRecord(vr)
 	default:
 		if v := reflect.ValueOf(d); v.Kind() == reflect.Ptr {
 			el := v.Elem()

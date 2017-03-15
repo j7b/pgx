@@ -214,7 +214,8 @@ func Encode(wbuf *WriteBuf, oid pgtype.Oid, arg interface{}) error {
 		return Encode(wbuf, oid, arg)
 	}
 
-	if value, ok := wbuf.conn.oidPgtypeValues[oid]; ok {
+	if dt, ok := wbuf.conn.ConnInfo.DataTypeForOid(oid); ok {
+		value := dt.Value
 		err := value.Set(arg)
 		if err != nil {
 			return err

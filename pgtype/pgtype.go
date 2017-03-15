@@ -117,9 +117,9 @@ type TextEncoder interface {
 var errUndefined = errors.New("cannot encode status undefined")
 
 type DataType struct {
-	Name string
-	Type reflect.Type
-	Oid  Oid
+	Value Value
+	Name  string
+	Oid   Oid
 }
 
 type ConnInfo struct {
@@ -136,71 +136,100 @@ func NewConnInfo() *ConnInfo {
 	}
 }
 
-func NewDefaultConnInfo() *ConnInfo {
-	ci := NewConnInfo()
-
-	// TODO - probably better if exact 1 to 1 mapping between oids and types. So might need to separate text and varchar and inet and cidr
-	dataTypes := []DataType{
-		{Name: "_aclitem", Type: reflect.TypeOf(AclitemArray{}), Oid: AclitemArrayOid},
-		{Name: "_bool", Type: reflect.TypeOf(BoolArray{}), Oid: BoolArrayOid},
-		{Name: "_bytea", Type: reflect.TypeOf(ByteaArray{}), Oid: ByteaArrayOid},
-		{Name: "_cidr", Type: reflect.TypeOf(CidrArray{}), Oid: CidrArrayOid},
-		{Name: "aclitem", Type: reflect.TypeOf(Aclitem{}), Oid: AclitemOid},
-		{Name: "bool", Type: reflect.TypeOf(Bool{}), Oid: BoolOid},
-		{Name: "bytea", Type: reflect.TypeOf(Bytea{}), Oid: ByteaOid},
-		{Name: "char", Type: reflect.TypeOf(QChar{}), Oid: CharOid},
-		{Name: "cid", Type: reflect.TypeOf(Cid{}), Oid: CidOid},
-		{Name: "cidr", Type: reflect.TypeOf(CidrArray{}), Oid: CidrOid},
-		{Name: "_date", Type: reflect.TypeOf(DateArray{}), Oid: DateArrayOid},
-		{Name: "date", Type: reflect.TypeOf(Date{}), Oid: DateOid},
-		{Name: "_float4", Type: reflect.TypeOf(Float4Array{}), Oid: Float4ArrayOid},
-		{Name: "float4", Type: reflect.TypeOf(Float4{}), Oid: Float4Oid},
-		{Name: "_float8", Type: reflect.TypeOf(Float8Array{}), Oid: Float8ArrayOid},
-		{Name: "float8", Type: reflect.TypeOf(Float8{}), Oid: Float8Oid},
-		{Name: "_inet", Type: reflect.TypeOf(InetArray{}), Oid: InetArrayOid},
-		{Name: "inet", Type: reflect.TypeOf(Inet{}), Oid: InetOid},
-		{Name: "_int2", Type: reflect.TypeOf(Int2Array{}), Oid: Int2ArrayOid},
-		{Name: "int2", Type: reflect.TypeOf(Int2{}), Oid: Int2Oid},
-		{Name: "_int4", Type: reflect.TypeOf(Int4Array{}), Oid: Int4ArrayOid},
-		{Name: "int4", Type: reflect.TypeOf(Int4{}), Oid: Int4Oid},
-		{Name: "_int8", Type: reflect.TypeOf(Int8Array{}), Oid: Int8ArrayOid},
-		{Name: "int8", Type: reflect.TypeOf(Int8{}), Oid: Int8Oid},
-		{Name: "jsonb", Type: reflect.TypeOf(Jsonb{}), Oid: JsonbOid},
-		{Name: "json", Type: reflect.TypeOf(Json{}), Oid: JsonOid},
-		{Name: "name", Type: reflect.TypeOf(Name{}), Oid: NameOid},
-		{Name: "oid", Type: reflect.TypeOf(OidValue{}), Oid: OidOid},
-		{Name: "_text", Type: reflect.TypeOf(TextArray{}), Oid: TextArrayOid},
-		{Name: "text", Type: reflect.TypeOf(Text{}), Oid: TextOid},
-		{Name: "tid", Type: reflect.TypeOf(Tid{}), Oid: TidOid},
-		{Name: "_timestamp", Type: reflect.TypeOf(TimestampArray{}), Oid: TimestampArrayOid},
-		{Name: "timestamp", Type: reflect.TypeOf(Timestamp{}), Oid: TimestampOid},
-		{Name: "_timestamptz", Type: reflect.TypeOf(TimestamptzArray{}), Oid: TimestamptzArrayOid},
-		{Name: "timestamptz", Type: reflect.TypeOf(Timestamptz{}), Oid: TimestamptzOid},
-		{Name: "_varchar", Type: reflect.TypeOf(VarcharArray{}), Oid: VarcharArrayOid},
-		{Name: "varchar", Type: reflect.TypeOf(Text{}), Oid: VarcharOid},
-		{Name: "xid", Type: reflect.TypeOf(Xid{}), Oid: XidOid},
+func (ci *ConnInfo) InitializeDataTypes(nameOids map[string]Oid) {
+	for name, oid := range nameOids {
+		var value Value
+		if t, ok := nameValues[name]; ok {
+			value = reflect.New(reflect.ValueOf(t).Elem().Type()).Interface().(Value)
+		} else {
+			value = &GenericText{}
+		}
+		ci.RegisterDataType(DataType{Value: value, Name: name, Oid: oid})
 	}
-
-	for _, dt := range dataTypes {
-		ci.RegisterDataType(dt)
-	}
-
 }
 
 func (ci *ConnInfo) RegisterDataType(t DataType) {
 	ci.oidToDataType[t.Oid] = &t
 	ci.nameToDataType[t.Name] = &t
-	ci.reflectTypeToDataType[t.Type] = &t
+	ci.reflectTypeToDataType[reflect.ValueOf(t.Value).Type()] = &t
 }
 
-func (ci *ConnInfo) DataTypeForOid(oid Oid) *DataType {
-	return ci.oidToDataType[oid]
+func (ci *ConnInfo) DataTypeForOid(oid Oid) (*DataType, bool) {
+	dt, ok := ci.oidToDataType[oid]
+	return dt, ok
 }
 
-func (ci *ConnInfo) DataTypeForName(name string) *DataType {
-	return ci.nameToDataType[name]
+func (ci *ConnInfo) DataTypeForName(name string) (*DataType, bool) {
+	dt, ok := ci.nameToDataType[name]
+	return dt, ok
 }
 
-func (ci *ConnInfo) DataTypeForReflectType(t reflect.Type) *DataType {
-	return ci.reflectTypeToDataType[t]
+func (ci *ConnInfo) DataTypeForValue(v Value) (*DataType, bool) {
+	dt, ok := ci.reflectTypeToDataType[reflect.ValueOf(v).Type()]
+	return dt, ok
+}
+
+// DeepCopy makes a deep copy of the ConnInfo.
+func (ci *ConnInfo) DeepCopy() *ConnInfo {
+	ci2 := &ConnInfo{
+		oidToDataType:         make(map[Oid]*DataType, len(ci.oidToDataType)),
+		nameToDataType:        make(map[string]*DataType, len(ci.nameToDataType)),
+		reflectTypeToDataType: make(map[reflect.Type]*DataType, len(ci.reflectTypeToDataType)),
+	}
+
+	for _, dt := range ci.oidToDataType {
+		ci2.RegisterDataType(DataType{
+			Value: reflect.New(reflect.ValueOf(dt.Value).Elem().Type()).Interface().(Value),
+			Name:  dt.Name,
+			Oid:   dt.Oid,
+		})
+	}
+
+	return ci2
+}
+
+var nameValues map[string]Value
+
+func init() {
+	nameValues = map[string]Value{
+		"_aclitem":     &AclitemArray{},
+		"_bool":        &BoolArray{},
+		"_bytea":       &ByteaArray{},
+		"_cidr":        &CidrArray{},
+		"_date":        &DateArray{},
+		"_float4":      &Float4Array{},
+		"_float8":      &Float8Array{},
+		"_inet":        &InetArray{},
+		"_int2":        &Int2Array{},
+		"_int4":        &Int4Array{},
+		"_int8":        &Int8Array{},
+		"_text":        &TextArray{},
+		"_timestamp":   &TimestampArray{},
+		"_timestamptz": &TimestamptzArray{},
+		"_varchar":     &VarcharArray{},
+		"aclitem":      &Aclitem{},
+		"bool":         &Bool{},
+		"bytea":        &Bytea{},
+		"char":         &QChar{},
+		"cid":          &Cid{},
+		"cidr":         &Cidr{},
+		"date":         &Date{},
+		"float4":       &Float4{},
+		"float8":       &Float8{},
+		"hstore":       &Hstore{},
+		"inet":         &Inet{},
+		"int2":         &Int2{},
+		"int4":         &Int4{},
+		"int8":         &Int8{},
+		"json":         &Json{},
+		"jsonb":        &Jsonb{},
+		"name":         &Name{},
+		"oid":          &OidValue{},
+		"text":         &Text{},
+		"tid":          &Tid{},
+		"timestamp":    &Timestamp{},
+		"timestamptz":  &Timestamptz{},
+		"varchar":      &Varchar{},
+		"xid":          &Xid{},
+	}
 }

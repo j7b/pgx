@@ -254,31 +254,32 @@ func (rows *Rows) Scan(dest ...interface{}) (err error) {
 				rows.Fatal(scanArgError{col: i, err: err})
 			}
 		} else {
-			if pgVal, present := rows.conn.oidPgtypeValues[vr.Type().DataType]; present {
+			if dt, ok := rows.conn.ConnInfo.DataTypeForOid(vr.Type().DataType); ok {
+				value := dt.Value
 				switch vr.Type().FormatCode {
 				case TextFormatCode:
-					if textDecoder, ok := pgVal.(pgtype.TextDecoder); ok {
+					if textDecoder, ok := value.(pgtype.TextDecoder); ok {
 						err = textDecoder.DecodeText(vr.bytes())
 						if err != nil {
 							vr.Fatal(err)
 						}
 					} else {
-						vr.Fatal(fmt.Errorf("%T is not a pgtype.TextDecoder", pgVal))
+						vr.Fatal(fmt.Errorf("%T is not a pgtype.TextDecoder", value))
 					}
 				case BinaryFormatCode:
-					if binaryDecoder, ok := pgVal.(pgtype.BinaryDecoder); ok {
+					if binaryDecoder, ok := value.(pgtype.BinaryDecoder); ok {
 						err = binaryDecoder.DecodeBinary(vr.bytes())
 						if err != nil {
 							vr.Fatal(err)
 						}
 					} else {
-						vr.Fatal(fmt.Errorf("%T is not a pgtype.BinaryDecoder", pgVal))
+						vr.Fatal(fmt.Errorf("%T is not a pgtype.BinaryDecoder", value))
 					}
 				default:
 					vr.Fatal(fmt.Errorf("unknown format code: %v", vr.Type().FormatCode))
 				}
 
-				if err := pgVal.AssignTo(d); err != nil {
+				if err := value.AssignTo(d); err != nil {
 					vr.Fatal(err)
 				}
 			} else {
@@ -315,29 +316,35 @@ func (rows *Rows) Values() ([]interface{}, error) {
 			continue
 		}
 
-		switch vr.Type().FormatCode {
-		case TextFormatCode:
-			decoder := rows.conn.oidPgtypeValues[vr.Type().DataType].(pgtype.TextDecoder)
-			if decoder == nil {
-				decoder = &pgtype.GenericText{}
+		if dt, ok := rows.conn.ConnInfo.DataTypeForOid(vr.Type().DataType); ok {
+			value := dt.Value
+
+			switch vr.Type().FormatCode {
+			case TextFormatCode:
+				decoder := value.(pgtype.TextDecoder)
+				if decoder == nil {
+					decoder = &pgtype.GenericText{}
+				}
+				err := decoder.DecodeText(vr.bytes())
+				if err != nil {
+					rows.Fatal(err)
+				}
+				values = append(values, decoder.(pgtype.Value).Get())
+			case BinaryFormatCode:
+				decoder := value.(pgtype.BinaryDecoder)
+				if decoder == nil {
+					decoder = &pgtype.GenericBinary{}
+				}
+				err := decoder.DecodeBinary(vr.bytes())
+				if err != nil {
+					rows.Fatal(err)
+				}
+				values = append(values, value.Get())
+			default:
+				rows.Fatal(errors.New("Unknown format code"))
 			}
-			err := decoder.DecodeText(vr.bytes())
-			if err != nil {
-				rows.Fatal(err)
-			}
-			values = append(values, decoder.(pgtype.Value).Get())
-		case BinaryFormatCode:
-			decoder := rows.conn.oidPgtypeValues[vr.Type().DataType].(pgtype.BinaryDecoder)
-			if decoder == nil {
-				decoder = &pgtype.GenericBinary{}
-			}
-			err := decoder.DecodeBinary(vr.bytes())
-			if err != nil {
-				rows.Fatal(err)
-			}
-			values = append(values, decoder.(pgtype.Value).Get())
-		default:
-			rows.Fatal(errors.New("Unknown format code"))
+		} else {
+			rows.Fatal(errors.New("Unknown type"))
 		}
 
 		if vr.Err() != nil {

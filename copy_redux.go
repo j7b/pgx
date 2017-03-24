@@ -7,12 +7,17 @@ import (
 )
 
 type CopierOptions interface {
-	o()
+	o() int
+	string() string
 }
 
 type copierformat string
 
-func (copierformat) o() {}
+func (copierformat) o() int { return 1 }
+
+func (c copierformat) string() string {
+	return fmt.Sprintf(`FORMAT '%s'`, c)
+}
 
 const (
 	CSVFormat    copierformat = "csv"
@@ -22,96 +27,124 @@ const (
 
 type CopierOIDs bool
 
-func (CopierOIDs) o() {}
+func (CopierOIDs) o() int { return 2 }
+
+func (c CopierOIDs) string() string {
+	return fmt.Sprintf(`OIDS %v`, c)
+}
 
 type CopierDelimiter rune
 
-func (CopierDelimiter) o() {}
+func (CopierDelimiter) o() int { return 3 }
+
+func (c CopierDelimiter) string() string {
+	return fmt.Sprintf(`DELIMITER '%s'`, string(c))
+}
 
 type CopierNullString string
 
-func (CopierNullString) o() {}
+func (CopierNullString) o() int { return 4 }
+
+func (c CopierNullString) string() string {
+	return fmt.Sprintf(`NULL '%s'`, c)
+}
 
 type CopierHeader bool
 
-func (CopierHeader) o() {}
+func (CopierHeader) o() int { return 5 }
+
+func (c CopierHeader) string() string {
+	return fmt.Sprintf(`HEADER %v`, c)
+}
 
 type CopierQuote rune
 
-func (CopierQuote) o() {}
+func (CopierQuote) o() int { return 6 }
+
+func (c CopierQuote) string() string {
+	s := string(c)
+	if s == `'` {
+		s = `''`
+	}
+	return fmt.Sprintf(`QUOTE '%s'`, s)
+}
 
 type CopierEscape rune
 
-func (CopierEscape) o() {}
+func (CopierEscape) o() int { return 7 }
+
+func (c CopierEscape) string() string {
+	return fmt.Sprintf(`ESCAPE '%s'`, string(c))
+}
 
 type CopierForceQuoteColumns []string
 
-func (CopierForceQuoteColumns) o() {}
+func (CopierForceQuoteColumns) o() int { return 8 }
+
+func (c CopierForceQuoteColumns) string() string {
+	if len(c) == 0 {
+		return ""
+	}
+	if len(c) == 1 && c[0] == `*` {
+		return fmt.Sprintf(`FORCE_QUOTE *`)
+	}
+	return fmt.Sprintf(`FORCE_QUOTE (%s)`, strings.Join(c, `,`))
+}
 
 type CopierForceNotNullColumns []string
 
-func (CopierForceNotNullColumns) o() {}
+func (CopierForceNotNullColumns) o() int { return 9 }
+
+func (c CopierForceNotNullColumns) string() string {
+	if len(c) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(`FORCE_NOT_NULL (%s)`, strings.Join(c, `,`))
+}
 
 type CopierEncoding string
 
-func (CopierEncoding) o() {}
+func (CopierEncoding) o() int { return 10 }
 
-type Copier struct {
-	format       string   // FORMAT format_name
-	oids         bool     // OIDS [ boolean ]
-	delimiter    rune     // DELIMITER 'delimiter_character'
-	null         string   // NULL 'null_string'
-	header       bool     // HEADER [ boolean ]
-	quote        rune     // QUOTE 'quote_character'
-	escape       rune     // ESCAPE 'escape_character'
-	forcequote   []string // FORCE_QUOTE { ( column_name [, ...] ) | * }
-	forcenotnull []string // FORCE_NOT_NULL ( column_name [, ...] )
-	encoding     string   // ENCODING 'encoding_name'
+func (s CopierEncoding) string() string {
+	return fmt.Sprintf(`ENCODING '%s'`, s)
 }
 
-func NewCopier(options ...CopierOptions) *Copier {
+type Copier struct {
+	opts map[int]CopierOptions
+}
+
+func NewCopier(options ...CopierOptions) (*Copier, error) {
 	c := new(Copier)
 	for _, o := range options {
-		switch t := o.(type) {
-		case copierformat:
-			c.format = string(t)
-		case CopierOIDs:
-			c.oids = bool(t)
-		case CopierDelimiter:
-			c.delimiter = rune(t)
-		case CopierNullString:
-			c.null = string(t)
-		case CopierHeader:
-			c.header = bool(t)
-		case CopierQuote:
-			c.quote = rune(t)
-		case CopierEscape:
-			c.escape = rune(t)
-		case CopierForceQuoteColumns:
-			c.forcequote = []string(t)
-		case CopierForceNotNullColumns:
-			c.forcenotnull = []string(t)
-		case CopierEncoding:
-			c.encoding = string(t)
+		if c.opts == nil {
+			c.opts = make(map[int]CopierOptions)
 		}
+		if _, found := c.opts[o.o()]; found {
+			return nil, fmt.Errorf("copier: option type %T specified twice", o)
+		}
+		c.opts[o.o()] = o
 	}
-	return c
+	return c, nil
 }
 
 func (co *Copier) options() string {
-	options := make([]string, 0, 1)
-	if co.format != "" {
-		options = append(options, fmt.Sprintf(`FORMAT '%s'`, co.format))
+	if len(co.opts) == 0 {
+		return ""
 	}
-	if len(options) > 0 {
-		return fmt.Sprintf(`(%s)`, strings.Join(options, `,`))
+	options := make([]string, 0, len(co.opts))
+	for _, v := range co.opts {
+		s := v.string()
+		if len(s) > 0 {
+			options = append(options, s)
+		}
 	}
-	return ""
+	return fmt.Sprintf(` WITH (%s)`, strings.Join(options, `,`))
 }
 
 type CopyType interface {
-	Table(regclass Identifier, columns ...string) CopyPrep
-	Query(q string, args ...interface{}) CopyPrep
+	Table(regclass Identifier, columns ...string) FromTo
+	Query(q string, args ...interface{}) To
 	ct()
 }
 
@@ -120,7 +153,7 @@ type copytype struct {
 	options *Copier
 }
 
-func (ct *copytype) Table(name Identifier, columns ...string) CopyPrep {
+func (ct *copytype) Table(name Identifier, columns ...string) FromTo {
 	return &copyprep{
 		tx:      ct.tx,
 		options: ct.options,
@@ -129,7 +162,7 @@ func (ct *copytype) Table(name Identifier, columns ...string) CopyPrep {
 	}
 }
 
-func (ct *copytype) Query(q string, args ...interface{}) CopyPrep {
+func (ct *copytype) Query(q string, args ...interface{}) To {
 	return &copyprep{
 		tx:      ct.tx,
 		options: ct.options,
@@ -140,7 +173,12 @@ func (ct *copytype) Query(q string, args ...interface{}) CopyPrep {
 
 func (*copytype) ct() {}
 
-type CopyPrep interface {
+type To interface {
+	To(io.Writer) error
+	cp()
+}
+
+type FromTo interface {
 	From(io.Reader) error
 	To(io.Writer) error
 	cp()
@@ -178,61 +216,55 @@ func (cp *copyprep) checktq() (table bool, err error) {
 	return
 }
 
-func (cp *copyprep) fromquery(r io.Reader) error {
-	return nil
-}
-
-func (cp *copyprep) fromtable(conn *Conn, r io.Reader) error {
-	var columns []string
-	if len(cp.columns) > 0 {
-		columns = make([]string, len(cp.columns))
-		for i := range cp.columns {
-			columns[i] = quoteIdentifier(cp.columns[i])
-		}
-	}
-	var cols string
-	if len(columns) > 0 {
-		cols = fmt.Sprintf(`(%s)`, strings.Join(columns, `,`))
-	}
-	table := cp.table.Sanitize()
-	options := cp.options.options()
-	err := conn.sendSimpleQuery(fmt.Sprintf("copy %s%s from stdin %s;", table, cols, options))
+func (cp *copyprep) copyout(conn *Conn, w io.Writer) error {
+	_, err := getmessage(conn, int('H'))
 	if err != nil {
 		return err
 	}
-	if err = conn.readUntilCopyInResponse(); err != nil {
-		return err
-	}
-	/*
-		wb := newWriteBuf(conn, copyFail)
-		isuck := []byte("I suck")
-		wb.WriteCString(string(isuck))
-		wb.closeMsg()
-		println(string(wb.buf))
-		_, err = conn.conn.Write(wb.buf)
+	var copydone bool
+	for !copydone {
+		t, r, err := conn.rxMsg()
 		if err != nil {
 			conn.die(err)
 			return err
 		}
-		for {
-			t, r, err := conn.rxMsg()
+		switch t {
+		case copyDone:
+			copydone = true
+		case copyData:
+			_, err = w.Write(r.readBytes(r.msgBytesRemaining))
 			if err != nil {
+				conn.die(err)
 				return err
 			}
-			switch t {
-			case commandComplete:
-				return nil
-			case errorResponse:
-				return conn.rxErrorResponse(r)
-			default:
-				err = conn.processContextFreeMsg(t, r)
-				if err != nil {
-					return err
-				}
+		case errorResponse:
+			err = conn.rxErrorResponse(r)
+			conn.die(err)
+			return err
+		default:
+			err = conn.processContextFreeMsg(t, r)
+			if err != nil {
+				conn.die(err)
+				return err
 			}
 		}
-	*/
+	}
+	_, err = getmessage(conn, commandComplete)
+	if err != nil {
+		return err
+	}
+	_, err = getmessage(conn, readyForQuery)
+	if err != nil {
+		return err
+	}
+	return nil
+}
 
+func (cp *copyprep) copyin(conn *Conn, r io.Reader) error {
+	_, err := getmessage(conn, copyInResponse)
+	if err != nil {
+		return err
+	}
 	var n int
 	buf := make([]byte, 65536)
 	wb := newWriteBuf(conn, copyData)
@@ -266,32 +298,61 @@ func (cp *copyprep) fromtable(conn *Conn, r io.Reader) error {
 		conn.die(err)
 		return err
 	}
-	var readyforquery bool
-	for !readyforquery {
-		t, r, err := conn.rxMsg()
-		if err != nil {
-			return err
-		}
-		switch t {
-		case commandComplete:
-			t, r, err = conn.rxMsg()
-			if err != nil {
-				return err
-			}
-			if t != readyForQuery {
-				return fmt.Errorf("not ready for query")
-			}
-			readyforquery = true
-		case errorResponse:
-			return conn.rxErrorResponse(r)
-		default:
-			err = conn.processContextFreeMsg(t, r)
-			if err != nil {
-				return err
-			}
-		}
+	_, err = getmessage(conn, commandComplete)
+	if err != nil {
+		return err
+	}
+	_, err = getmessage(conn, readyForQuery)
+	if err != nil {
+		return err
 	}
 	return nil
+}
+
+func (cp *copyprep) fromtable(conn *Conn, r io.Reader) error {
+	var columns []string
+	if len(cp.columns) > 0 {
+		columns = make([]string, len(cp.columns))
+		for i := range cp.columns {
+			columns[i] = quoteIdentifier(cp.columns[i])
+		}
+	}
+	var cols string
+	if len(columns) > 0 {
+		cols = fmt.Sprintf(`(%s)`, strings.Join(columns, `,`))
+	}
+	table := cp.table.Sanitize()
+	options := cp.options.options()
+	err := conn.sendSimpleQuery(fmt.Sprintf("copy %s%s from stdin %s;", table, cols, options))
+	if err != nil {
+		return err
+	}
+	return cp.copyin(conn, r)
+}
+
+func (cp *copyprep) totable(conn *Conn, w io.Writer) error {
+	var columns []string
+	if len(cp.columns) > 0 {
+		columns = make([]string, len(cp.columns))
+		for i := range cp.columns {
+			columns[i] = quoteIdentifier(cp.columns[i])
+		}
+	}
+	var cols string
+	if len(columns) > 0 {
+		cols = fmt.Sprintf(`(%s)`, strings.Join(columns, `,`))
+	}
+	table := cp.table.Sanitize()
+	options := cp.options.options()
+	err := conn.sendSimpleQuery(fmt.Sprintf("copy %s%s to stdout %s;", table, cols, options))
+	if err != nil {
+		return err
+	}
+	return cp.copyout(conn, w)
+}
+
+func (cp *copyprep) toquery(conn *Conn, w io.Writer) error {
+	return fmt.Errorf("TODO")
 }
 
 func (cp *copyprep) From(r io.Reader) error {
@@ -306,7 +367,7 @@ func (cp *copyprep) From(r io.Reader) error {
 	if istable {
 		return cp.fromtable(conn, r)
 	}
-	return cp.fromquery(r)
+	return fmt.Errorf("copy: query not possible here")
 }
 
 func (cp *copyprep) To(w io.Writer) error {
@@ -318,12 +379,34 @@ func (cp *copyprep) To(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	_, _ = conn, istable
-	return nil
+	if istable {
+		return cp.totable(conn, w)
+	}
+	return cp.toquery(conn, w)
 }
 
 func (*copyprep) cp() {}
 
 func (co *Copier) Copy(tx *Tx) CopyType {
 	return &copytype{options: co, tx: tx}
+}
+
+func getmessage(conn *Conn, want int) (*msgReader, error) {
+	for {
+		t, r, err := conn.rxMsg()
+		if err != nil {
+			return nil, err
+		}
+		switch t {
+		case byte(want):
+			return r, nil
+		case errorResponse:
+			return nil, conn.rxErrorResponse(r)
+		default:
+			err = conn.processContextFreeMsg(t, r)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 }
